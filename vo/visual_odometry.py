@@ -10,27 +10,26 @@ from geometry.se3 import transform_point
 class VisualOdometry:
 
     def __init__(self, K):
-        """
-        K: camera intrinsic matrix (3x3)
-        """
+
         self.K = K
 
-        self.poses = []           # List of 4x4 SE(3) matrices
-        self.landmarks = []       # List of 3D points (Nx3)
+        self.poses = []
+        self.landmarks = {}   # ACTUAL_ID → 3D point
 
         self.initialized = False
 
         self.prev_keypoints = None
         self.prev_descriptors = None
+        self.prev_ids = None
 
-    # --------------------------------------------------------
+    # -------------------------------------------------------
     # INITIALIZATION
-    # --------------------------------------------------------
+    # -------------------------------------------------------
 
-    def process_first_two_frames(self, kpts0, desc0, kpts1, desc1):
-        """
-        Performs two-view initialization using epipolar geometry.
-        """
+    def process_first_two_frames(
+        self, kpts0, desc0, ids0,
+        kpts1, desc1, ids1
+    ):
 
         matches = match_descriptors(desc0, desc1)
 
@@ -46,44 +45,44 @@ class VisualOdometry:
         self.poses.append(T0)
         self.poses.append(T1)
 
-        self.landmarks = list(points_3d)
+        # Store landmarks using ACTUAL_ID from first frame
+        for (i, _), X in zip(matches, points_3d):
+            actual_id = ids0[i]
+            self.landmarks[actual_id] = X
 
         self.prev_keypoints = kpts1
         self.prev_descriptors = desc1
+        self.prev_ids = ids1
 
         self.initialized = True
 
         print(f"Initialization complete with {len(self.landmarks)} landmarks")
 
-    # --------------------------------------------------------
-    # TRACKING + MAPPING
-    # --------------------------------------------------------
+    # -------------------------------------------------------
+    # TRACKING
+    # -------------------------------------------------------
 
-    def process_frame(self, kpts, descriptors):
-        """
-        Processes a new frame after initialization.
-        """
+    def process_frame(self, kpts, descriptors, ids):
 
         if not self.initialized:
             raise RuntimeError("System not initialized")
 
         matches = match_descriptors(self.prev_descriptors, descriptors)
 
-        if len(matches) < 6:
-            print("Not enough matches for tracking")
-            return
-
         points_3d = []
         points_2d = []
 
-        # Build 3D-2D correspondences
+        # Build correct 3D-2D correspondences
         for idx_prev, idx_curr in matches:
-            if idx_prev < len(self.landmarks):
-                points_3d.append(self.landmarks[idx_prev])
+
+            actual_id = self.prev_ids[idx_prev]
+
+            if actual_id in self.landmarks:
+                points_3d.append(self.landmarks[actual_id])
                 points_2d.append(kpts[idx_curr])
 
         if len(points_3d) < 6:
-            print("Not enough valid 3D-2D correspondences")
+            print("Not enough correspondences")
             return
 
         points_3d = np.array(points_3d)
@@ -91,7 +90,6 @@ class VisualOdometry:
 
         T_init = self.poses[-1]
 
-        # Pose estimation via Gauss-Newton
         T_new = gauss_newton_pose_estimation(
             T_init,
             self.K,
@@ -102,56 +100,31 @@ class VisualOdometry:
         self.poses.append(T_new)
 
         # Triangulate new landmarks
-        self.triangulate_new_landmarks(
-            self.prev_keypoints,
-            kpts,
-            matches,
-            self.poses[-2],
-            T_new
-        )
+        for idx_prev, idx_curr in matches:
+
+            actual_id = self.prev_ids[idx_prev]
+
+            if actual_id not in self.landmarks:
+
+                pt_prev = self.prev_keypoints[idx_prev]
+                pt_curr = kpts[idx_curr]
+
+                X = triangulate_point(
+                    self.K,
+                    self.poses[-2],
+                    T_new,
+                    pt_prev,
+                    pt_curr
+                )
+
+                X_cam_prev = transform_point(self.poses[-2], X)
+                X_cam_curr = transform_point(T_new, X)
+
+                if X_cam_prev[2] > 0 and X_cam_curr[2] > 0:
+                    self.landmarks[actual_id] = X
 
         self.prev_keypoints = kpts
         self.prev_descriptors = descriptors
+        self.prev_ids = ids
 
         print(f"Frame processed. Total landmarks: {len(self.landmarks)}")
-
-    # --------------------------------------------------------
-    # TRIANGULATION (Incremental Simple Version)
-    # --------------------------------------------------------
-
-    def triangulate_new_landmarks(
-        self,
-        prev_kpts,
-        curr_kpts,
-        matches,
-        T_prev,
-        T_curr
-    ):
-        """
-        Triangulates new landmarks from unmatched correspondences.
-        Simple version with positive depth check.
-        """
-
-        for idx_prev, idx_curr in matches:
-
-            # If already triangulated, skip
-            if idx_prev < len(self.landmarks):
-                continue
-
-            pt_prev = prev_kpts[idx_prev]
-            pt_curr = curr_kpts[idx_curr]
-
-            X = triangulate_point(
-                self.K,
-                T_prev,
-                T_curr,
-                pt_prev,
-                pt_curr
-            )
-
-            # Cheirality check: point must be in front of both cameras
-            X_cam_prev = transform_point(T_prev, X)
-            X_cam_curr = transform_point(T_curr, X)
-
-            if X_cam_prev[2] > 0 and X_cam_curr[2] > 0:
-                self.landmarks.append(X)
