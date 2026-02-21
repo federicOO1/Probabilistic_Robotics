@@ -2,6 +2,7 @@ import os
 from vo.visual_odometry import VisualOdometry
 from data.loader import load_camera_intrinsics, load_all_measurements
 from evaluation.trajectory_error import load_groundtruth, evaluate_trajectory
+from evaluation.map_error import load_world_map, evaluate_map
 
 
 def main():
@@ -38,6 +39,14 @@ def main():
 
     print("Mean rotation error:", rot_error)
     print("Mean scale ratio:", scale_ratio)
+
+    # Map evaluation
+    world_path = os.path.join(data_folder, "world.dat")
+    gt_landmarks = load_world_map(world_path)
+
+    map_rmse = evaluate_map(vo.landmarks, gt_landmarks, scale_ratio)
+
+    print("Map RMSE:", map_rmse)
 
 
 if __name__ == "__main__":
