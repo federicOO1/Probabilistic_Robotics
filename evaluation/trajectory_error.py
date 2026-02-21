@@ -86,4 +86,4 @@ def evaluate_trajectory(estimated_poses, gt_poses):
 
     print("Scale ratios sample:", trans_ratios[:10])
 
-    return np.mean(rot_errors), np.mean(trans_ratios)
+    return np.mean(rot_errors), np.mean(trans_ratios), trans_ratios
