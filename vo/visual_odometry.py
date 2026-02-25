@@ -121,7 +121,19 @@ class VisualOdometry:
                 X_cam_curr = transform_point(T_new, X)
 
                 if X_cam_prev[2] > 0 and X_cam_curr[2] > 0:
-                    self.landmarks[actual_id] = X
+
+                    # Compute viewing rays
+                    r1 = X_cam_prev / np.linalg.norm(X_cam_prev)
+                    r2 = X_cam_curr / np.linalg.norm(X_cam_curr)
+
+                    cos_angle = np.clip(np.dot(r1, r2), -1.0, 1.0)
+                    angle = np.arccos(cos_angle)
+
+                    # Minimum triangulation angle threshold (in radians)
+                    min_angle = np.deg2rad(1.0)  # 1 degree
+
+                    if angle > min_angle:
+                        self.landmarks[actual_id] = X
 
         self.prev_keypoints = kpts
         self.prev_descriptors = descriptors
