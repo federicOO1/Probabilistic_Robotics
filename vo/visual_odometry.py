@@ -14,21 +14,23 @@ class VisualOdometry:
         self.K = K
 
         self.poses = []
-        self.landmarks = {}   # ACTUAL_ID → 3D point
+        self.landmarks = {}   # landmark_id -> 3D point
+
+        self.next_landmark_id = 0
 
         self.initialized = False
 
         self.prev_keypoints = None
         self.prev_descriptors = None
-        self.prev_ids = None
+        self.prev_landmark_ids = None
 
     # -------------------------------------------------------
     # INITIALIZATION
     # -------------------------------------------------------
 
     def process_first_two_frames(
-        self, kpts0, desc0, ids0,
-        kpts1, desc1, ids1
+        self, kpts0, desc0,
+        kpts1, desc1
     ):
 
         matches = match_descriptors(desc0, desc1)
@@ -45,14 +47,18 @@ class VisualOdometry:
         self.poses.append(T0)
         self.poses.append(T1)
 
-        # Store landmarks using ACTUAL_ID from first frame
-        for (i, _), X in zip(matches, points_3d):
-            actual_id = ids0[i]
-            self.landmarks[actual_id] = X
+        self.prev_landmark_ids = [None] * len(kpts1)
+
+        for (idx0, idx1), X in zip(matches, points_3d):
+
+            landmark_id = self.next_landmark_id
+            self.next_landmark_id += 1
+
+            self.landmarks[landmark_id] = X
+            self.prev_landmark_ids[idx1] = landmark_id
 
         self.prev_keypoints = kpts1
         self.prev_descriptors = desc1
-        self.prev_ids = ids1
 
         self.initialized = True
 
@@ -62,7 +68,7 @@ class VisualOdometry:
     # TRACKING
     # -------------------------------------------------------
 
-    def process_frame(self, kpts, descriptors, ids):
+    def process_frame(self, kpts, descriptors):
 
         if not self.initialized:
             raise RuntimeError("System not initialized")
@@ -72,13 +78,12 @@ class VisualOdometry:
         points_3d = []
         points_2d = []
 
-        # Build correct 3D-2D correspondences
         for idx_prev, idx_curr in matches:
 
-            actual_id = self.prev_ids[idx_prev]
+            landmark_id = self.prev_landmark_ids[idx_prev]
 
-            if actual_id in self.landmarks:
-                points_3d.append(self.landmarks[actual_id])
+            if landmark_id is not None:
+                points_3d.append(self.landmarks[landmark_id])
                 points_2d.append(kpts[idx_curr])
 
         if len(points_3d) < 6:
@@ -99,13 +104,17 @@ class VisualOdometry:
 
         self.poses.append(T_new)
 
-        # Triangulate new landmarks
+        current_landmark_ids = [None] * len(kpts)
+
         for idx_prev, idx_curr in matches:
 
-            actual_id = self.prev_ids[idx_prev]
+            landmark_id = self.prev_landmark_ids[idx_prev]
 
-            if actual_id not in self.landmarks:
+            if landmark_id is not None:
+                current_landmark_ids[idx_curr] = landmark_id
 
+            else:
+                # triangulate new point
                 pt_prev = self.prev_keypoints[idx_prev]
                 pt_curr = kpts[idx_curr]
 
@@ -122,21 +131,24 @@ class VisualOdometry:
 
                 if X_cam_prev[2] > 0 and X_cam_curr[2] > 0:
 
-                    # Compute viewing rays
+                    # triangulation angle filter
                     r1 = X_cam_prev / np.linalg.norm(X_cam_prev)
                     r2 = X_cam_curr / np.linalg.norm(X_cam_curr)
 
                     cos_angle = np.clip(np.dot(r1, r2), -1.0, 1.0)
                     angle = np.arccos(cos_angle)
 
-                    # Minimum triangulation angle threshold (in radians)
-                    min_angle = np.deg2rad(1.0)  # 1 degree
+                    min_angle = np.deg2rad(1.0)
 
                     if angle > min_angle:
-                        self.landmarks[actual_id] = X
+                        landmark_id = self.next_landmark_id
+                        self.next_landmark_id += 1
+
+                        self.landmarks[landmark_id] = X
+                        current_landmark_ids[idx_curr] = landmark_id
 
         self.prev_keypoints = kpts
         self.prev_descriptors = descriptors
-        self.prev_ids = ids
+        self.prev_landmark_ids = current_landmark_ids
 
         print(f"Frame processed. Total landmarks: {len(self.landmarks)}")

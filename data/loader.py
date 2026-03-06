@@ -26,7 +26,6 @@ def load_measurement_file(path):
 
     keypoints = []
     descriptors = []
-    actual_ids = []
 
     with open(path, "r") as f:
         for line in f:
@@ -38,19 +37,16 @@ def load_measurement_file(path):
 
             parts = line.split()
 
-            actual_id = int(parts[2])
             u = float(parts[3])
             v = float(parts[4])
             desc = list(map(float, parts[5:15]))
 
             keypoints.append([u, v])
             descriptors.append(desc)
-            actual_ids.append(actual_id)
 
     return (
         np.array(keypoints),
-        np.array(descriptors),
-        np.array(actual_ids)
+        np.array(descriptors)
     )
 
 
@@ -61,7 +57,7 @@ def load_all_measurements(data_folder):
     frames = []
 
     for file in files:
-        kpts, desc, ids = load_measurement_file(file)
-        frames.append((kpts, desc, ids))
+        kpts, desc = load_measurement_file(file)
+        frames.append((kpts, desc))
 
     return frames
